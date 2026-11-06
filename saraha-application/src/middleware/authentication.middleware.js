@@ -1,0 +1,40 @@
+import jwt from "jsonwebtoken";
+import { findById } from "../DB/service/base.repository.js";
+import { userModel } from "../DB/model/user.model.js";
+import { KEY_ACCESS } from "../../config/config.service.js";
+import { ttl } from "../DB/service/redis.service.js";
+
+export const authentication = async (req, res, next) => {
+    const { authorization } = req.headers;
+
+    console.log("Authorization:", authorization);
+    console.log("Token parts:", authorization?.split(".").length);
+
+    if (!authorization)
+        throw new Error("token not exist", { cause: { status: 404 } });
+
+    const decodedToken = jwt.verify(authorization, KEY_ACCESS);
+
+    if (!decodedToken?.id)
+        throw new Error("id not exist on token", { cause: { status: 400 } });
+
+    const user = await findById({
+        model: userModel,
+        ID: decodedToken.id
+    });
+
+    if (!user)
+        throw new Error("user not exist", { cause: { status: 404 } });
+
+    if (user?.changeCredentialAt?.getTime() > decodedToken?.iat * 1000) {
+        throw new Error("pls login, the token expire", { cause: { status: 400 } });
+    }
+
+    if (await ttl(`revoke_token::${user._id}::${decodedToken.jti}`) > 0)
+        throw new Error("pls login, the token expire", { cause: { status: 400 } });
+
+    req.user = user;
+    req.decoded = decodedToken;
+
+    next();
+};
